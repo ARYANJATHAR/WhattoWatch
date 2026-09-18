@@ -9,7 +9,9 @@ export default function Footer() {
             WHATOWATCH
           </p>
           <p className="mono-micro mt-2 text-[#f9f5f2]/80 max-w-[52ch]">
-            5 picks, 5 hooks. Ratings by TMDB. Hooks play from YouTube, credit to the creators.
+            5 picks, 5 hooks. Ratings and posters by TMDB — this product uses
+            the TMDB API but is not endorsed or certified by TMDB. Hooks play
+            from YouTube, credit to the creators.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
