@@ -1,0 +1,240 @@
+@import "tailwindcss";
+
+/* ---------- Flying Papers — Saturday morning cartoon confessional ---------- */
+:root {
+  /* Colors */
+  --color-dusk-violet: #8584bd;
+  --color-hi-vis-yellow: #f4ed36;
+  --color-buttery-yellow: #f9cc73;
+  --color-lilac-shadow: #61609a;
+  --color-bubblegum-pink: #f8c1ba;
+  --color-matcha-cream: #b5c995;
+  --color-magenta-punch: #ac4f98;
+  --color-firecracker-red: #c94245;
+  --color-bone-white: #f9f5f2;
+  --color-ink-black: #1a1a1a;
+  --color-pure-black: #000000;
+
+  /* Surfaces */
+  --surface-dusk-violet-stage: #8584bd;
+  --surface-bone-white-card: #f9f5f2;
+  --surface-lilac-shadow-block: #61609a;
+  --surface-hi-vis-yellow-surface: #f4ed36;
+
+  /* Layout */
+  --section-gap: 40px;
+  --card-padding: 17px;
+  --radius-cards: 6px;
+  --radius-buttons: 100px;
+
+  /* Legacy aliases mapped onto the new system (keeps old classes working) */
+  --bg: var(--color-dusk-violet);
+  --surface: var(--color-bone-white);
+  --surface-2: var(--color-lilac-shadow);
+  --ink: var(--color-bone-white);
+  --muted: #efe9e2;
+  --faint: rgba(249, 245, 242, 0.62);
+  --line: var(--color-ink-black);
+  --accent: var(--color-hi-vis-yellow);
+  --accent-ink: var(--color-pure-black);
+  --accent-soft: rgba(244, 237, 54, 0.16);
+}
+
+@theme {
+  --color-dusk-violet: #8584bd;
+  --color-hi-vis-yellow: #f4ed36;
+  --color-buttery-yellow: #f9cc73;
+  --color-lilac-shadow: #61609a;
+  --color-bubblegum-pink: #f8c1ba;
+  --color-matcha-cream: #b5c995;
+  --color-magenta-punch: #ac4f98;
+  --color-firecracker-red: #c94245;
+  --color-bone-white: #f9f5f2;
+  --color-ink-black: #1a1a1a;
+  --color-pure-black: #000000;
+
+  --font-display: "Anton", "Arial Narrow", ui-sans-serif, system-ui, sans-serif;
+  --font-body-bold: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-ui: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono2: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --animate-marquee: marquee 26s linear infinite;
+  --animate-float: float 7s ease-in-out infinite;
+  --animate-float-late: float 8s ease-in-out -3s infinite;
+  --animate-breathe: breathe 2.2s ease-in-out infinite;
+  --animate-spin-slow: spin 14s linear infinite;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-12px) rotate(1deg); }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+html, body {
+  background: var(--color-dusk-violet);
+  color: var(--color-bone-white);
+  font-family: var(--font-ui);
+}
+
+::selection {
+  background: var(--color-hi-vis-yellow);
+  color: var(--color-pure-black);
+}
+
+/* Poster display type — ObviouslyVariable substitute (Anton), calt off.
+   NOTE: keep leading roomy (0.95+) — tight poster leading makes
+   stacked lines collide ("attached words"). */
+.font-poster {
+  font-family: var(--font-display);
+  font-weight: 400;
+  line-height: 0.95;
+  letter-spacing: 0.01em;
+  word-spacing: 0.06em;
+  text-transform: uppercase;
+  font-feature-settings: "calt" 0;
+}
+/* One poster line: breathing room above/below so lines never touch */
+.hero-line {
+  display: block;
+  padding-bottom: 0.06em;
+  margin-bottom: 0.06em;
+}
+.hero-line:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.font-bold-body {
+  font-family: var(--font-body-bold);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+}
+.mono-tag {
+  font-family: var(--font-mono2);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  word-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.mono-micro {
+  font-family: var(--font-mono2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Primary gate pill — cream fill, black text, 100px radius, NO shadow */
+.btn-gate {
+  background: var(--color-bone-white);
+  color: var(--color-pure-black);
+  border-radius: 100px;
+  padding: 14px 28px;
+  font-family: var(--font-body-bold);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  border: 2px solid var(--color-pure-black);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.2s ease;
+}
+.btn-gate:hover { transform: translateY(-2px); }
+.btn-gate:active { transform: scale(0.98); }
+
+/* Secondary outlined action — transparent, hi-vis yellow border+text */
+.btn-outline {
+  background: transparent;
+  color: var(--color-hi-vis-yellow);
+  border: 2px solid var(--color-hi-vis-yellow);
+  border-radius: 100px;
+  padding: 14px 28px;
+  font-family: var(--font-body-bold);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+.btn-outline:hover { background: rgba(244, 237, 54, 0.12); transform: translateY(-2px); }
+.btn-outline:active { transform: scale(0.98); }
+
+/* Tertiary underline link */
+.link-underline {
+  color: var(--color-bone-white);
+  font-family: var(--font-mono2);
+  font-size: 12px;
+  line-height: 0.8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 1px;
+}
+.link-underline:hover { color: var(--color-hi-vis-yellow); }
+
+/* Confetti card — flat paint swatch, 6px, 17px padding, no shadow/border */
+.confetti-card {
+  border-radius: 6px;
+  padding: 17px;
+}
+/* Dark text card — bone fill, ink text */
+.dark-text-card {
+  background: var(--color-bone-white);
+  color: var(--color-ink-black);
+  border-radius: 6px;
+  padding: 17px;
+  border: 2px solid var(--color-pure-black);
+}
+/* Lilac nested block */
+.lilac-block {
+  background: var(--color-lilac-shadow);
+  color: var(--color-bone-white);
+  border-radius: 6px;
+  padding: 17px;
+}
+
+/* Flat — kill all shadows from the old theme */
+.feature-surface, .glass-bar {
+  box-shadow: none !important;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+.shimmer-mask { position: relative; overflow: hidden; }
+.shimmer-mask::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(249, 245, 242, 0.25) 50%, transparent 80%);
+  animation: shimmer 1.8s linear infinite;
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+/* Outlined poster text */
+.text-stroke {
+  -webkit-text-stroke: 2px var(--color-pure-black);
+  paint-order: stroke fill;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
