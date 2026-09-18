@@ -56,6 +56,11 @@ function keywords(title: string): string[] {
     .filter((w) => w.length > 2 && !STOP.has(w) && !/^\d+$/.test(w));
 }
 
+/** Devanagari / non-Latin titles — keyword matching won't work on Latin snippets. */
+function isNonLatinTitle(title: string): boolean {
+  return /[^\x00-\x7F]/.test(title) && keywords(title).length === 0;
+}
+
 /** Fraction of title keywords present in the video title (0..1). */
 function relevance(videoTitle: string, keys: string[]): number {
   if (!keys.length) return 0.5; // e.g. "Up", "It" — nothing to match on
@@ -154,7 +159,7 @@ async function searchHits(apiKey: string, q: string): Promise<SearchHit[]> {
 const CINEMA_WORDS = [
   "movie", "film", "series", "web series", "scene", "clip", "trailer",
   "teaser", "episode", "season", "dialogue", "actor", "actress", "cinema",
-  "hollywood", "bollywood", "netflix", "prime video", "hotstar", "jawan",
+  "hollywood", "bollywood", "hindi", "netflix", "prime video", "hotstar", "jawan",
   "interval", "climax", "bgm", "casting", "audition",
 ];
 const BLOCK_WORDS = [
@@ -178,6 +183,9 @@ function isAboutTitle(hit: SearchHit, title: string, year: string): boolean {
   const blocked = BLOCK_WORDS.some((w) => hay.includes(clean(w).trim()));
   const cinema = year && hay.includes(year) ? true : CINEMA_WORDS.some((w) => hay.includes(clean(w).trim()));
   if (blocked && !cinema) return false;
+
+  // Non-Latin titles (Bollywood originals): trust year + cinema context.
+  if (isNonLatinTitle(title)) return cinema && !blocked;
 
   // Weak title (one generic word like "Run"): demand the exact title
   // PLUS cinema context (year, "movie", "scene", …). Kills cricket "run outs".
@@ -216,12 +224,16 @@ export async function getTopShort(
 
   try {
     const medium = kind === "tv" ? "series" : "movie";
+    const nonLatin = isNonLatinTitle(title);
     // Weak (single-word) titles get quoted so "Run" doesn't match "run out".
     const subject = keywords(title).length <= 1 ? `"${title}"` : title;
     const queries = [
       `${subject} ${year} ${medium} best scene`,
       `${subject} ${medium} short`,
       `${subject} ${year} ${medium} dialogue scene`,
+      ...(nonLatin
+        ? [`${title} ${year} bollywood scene hindi`, `${title} ${year} movie scene`]
+        : []),
     ];
     const settled = await Promise.allSettled(queries.map((q) => searchHits(apiKey, q)));
     const seen = new Map<string, SearchHit>();
@@ -281,7 +293,12 @@ export async function getTopShort(
       })
       // Must be about THIS title, on a film shelf, not an ad, and short
       // enough to embed as a hook.
-      .filter((c) => c.usable && c.rel >= (keys.length <= 1 ? 0 : 0.5) && c.shortEnough)
+      .filter(
+        (c) =>
+          c.usable &&
+          c.rel >= (nonLatin || keys.length <= 1 ? 0 : 0.5) &&
+          c.shortEnough,
+      )
       .sort((a, b) => b.score - a.score);
 
     const top = candidates[0];

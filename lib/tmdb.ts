@@ -9,6 +9,8 @@ import {
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p/w500";
+const TARGET_PICKS = 5;
+const CANDIDATE_POOL = 25;
 
 function key(): string | null {
   return process.env.TMDB_API_KEY || null;
@@ -51,7 +53,6 @@ async function tmdb(path: string, params: Record<string, string>): Promise<unkno
   for (const [kk, vv] of Object.entries(params)) {
     if (vv) url.searchParams.set(kk, vv);
   }
-  // Bounded: an upstream hang must never hang our route.
   const res = await fetch(url.toString(), {
     next: { revalidate: 3600 },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -66,7 +67,6 @@ function asRows(data: unknown, m: MediaKind): TmdbRow[] {
   return results.map((r) => ({ ...r, _media: m }));
 }
 
-// Demo fallback so the UI works with no API key
 function demoPicks(a: QuizAnswers): Pick[] {
   const titles = [
     { title: "3 Idiots", year: "2009", rating: 8.4 },
@@ -93,24 +93,19 @@ function demoPicks(a: QuizAnswers): Pick[] {
   }));
 }
 
-/* Movie genre id → TV genre id. TV has no Action(28)/Thriller(53)/
-   Horror(27)/Romance(10749)/Fantasy(14) buckets, so untranslated ids
-   would silently return ZERO tv results. */
 const TV_GENRE_FALLBACK: Record<string, string> = {
-  "28": "10759", // Action → Action & Adventure
-  "12": "10759", // Adventure → Action & Adventure
-  "14": "10765", // Fantasy → Sci-Fi & Fantasy
-  "27": "9648", // Horror → Mystery
-  "10749": "18", // Romance → Drama
-  "878": "10765", // Sci-Fi → Sci-Fi & Fantasy
-  "53": "80", // Thriller → Crime
+  "28": "10759",
+  "12": "10759",
+  "14": "10765",
+  "27": "9648",
+  "10749": "18",
+  "878": "10765",
+  "53": "80",
 };
 
-/* The quiz picker offers TV buckets (10759/10765) that don't exist on
-   the movie endpoint — untranslated they'd poison movie queries. */
 const MOVIE_GENRE_FALLBACK: Record<string, string> = {
-  "10759": "28", // Action-Adventure → Action
-  "10765": "878", // Sci-Fi & Fantasy → Sci-Fi
+  "10759": "28",
+  "10765": "878",
 };
 
 function translateGenres(media: "movie" | "tv", ids: string[]): string[] {
@@ -119,14 +114,9 @@ function translateGenres(media: "movie" | "tv", ids: string[]): string[] {
 }
 
 function genresFor(media: "movie" | "tv", ids: string[]): string {
-  // "|" = OR in TMDB. "," would mean AND (title must be ALL genres
-  // at once) and usually returns nothing → wrong/empty picks.
   return translateGenres(media, ids).join("|");
 }
 
-/* Time answers imply a shape: "binge" means series, "under 90 min" and
-   "around 2 hours" mean movies. Runtime bounds only exist on the movie
-   endpoint — sending them to discover/tv is silently ignored. */
 function mediaFor(a: QuizAnswers): ("movie" | "tv")[] {
   if (a.format !== "either") return [a.format];
   if (a.time === "binge") return ["tv"];
@@ -134,12 +124,54 @@ function mediaFor(a: QuizAnswers): ("movie" | "tv")[] {
   return ["movie", "tv"];
 }
 
-type DiscoverOpts = { relaxed?: boolean };
+type DiscoverOpts = { relaxed?: boolean; softRelaxed?: boolean; page?: number };
+
+function applyLanguageFilter(
+  base: Record<string, string>,
+  a: QuizAnswers,
+  strict: boolean,
+): void {
+  if (a.language === "en") {
+    base.with_original_language = "en";
+    return;
+  }
+  if (a.language === "hi") {
+    // Strict: Hindi originals. Relaxed: broader Indian cinema — never Hollywood.
+    if (strict) base.with_original_language = "hi";
+    else base.with_origin_country = "IN";
+  }
+}
+
+function dedupeRows(rows: TmdbRow[]): TmdbRow[] {
+  const seen = new Set<number>();
+  return rows.filter((r) => {
+    if (seen.has(r.id)) return false;
+    seen.add(r.id);
+    return true;
+  });
+}
+
+async function fetchDiscoverPages(
+  path: string,
+  base: Record<string, string>,
+  m: MediaKind,
+  startPage: number,
+): Promise<TmdbRow[]> {
+  const data = await tmdb(path, { ...base, page: String(startPage) });
+  const rows = asRows(data, m);
+  if (rows.length < 12) {
+    const p2 = await tmdb(path, { ...base, page: String(startPage + 1) });
+    rows.push(...asRows(p2, m));
+  }
+  return rows;
+}
 
 async function discover(a: QuizAnswers, opts: DiscoverOpts = {}): Promise<TmdbRow[]> {
   const mood = MOOD_MAP[a.mood];
   const picked = a.genres.length ? a.genres : mood.genres.split(",");
   const media = mediaFor(a);
+  const startPage = opts.page ?? 1;
+  const strict = !opts.relaxed && !opts.softRelaxed;
 
   const all: TmdbRow[] = [];
   for (const m of media) {
@@ -150,16 +182,12 @@ async function discover(a: QuizAnswers, opts: DiscoverOpts = {}): Promise<TmdbRo
       with_genres: genresFor(m, picked),
       watch_region: "IN",
     };
-    if (!opts.relaxed) {
-      if (a.language === "hi") base.with_original_language = "hi";
-      if (a.language === "en") base.with_original_language = "en";
-      if (a.providers.length) {
-        // flatrate = actually streaming (not rent/buy); "|" = on ANY of my OTTs
-        base.with_watch_monetization_types = "flatrate";
-        base.with_watch_providers = a.providers.join("|");
-      }
+    applyLanguageFilter(base, a, strict);
+    if (strict && a.providers.length) {
+      base.with_watch_monetization_types = "flatrate";
+      base.with_watch_providers = a.providers.join("|");
     }
-    if (m === "movie") {
+    if (strict && m === "movie") {
       if (a.time === "short") base["with_runtime.lte"] = "90";
       if (a.time === "standard") {
         base["with_runtime.gte"] = "80";
@@ -168,53 +196,46 @@ async function discover(a: QuizAnswers, opts: DiscoverOpts = {}): Promise<TmdbRo
     }
 
     const path = m === "movie" ? "/discover/movie" : "/discover/tv";
-    const data = await tmdb(path, { ...base, page: "1" });
-    all.push(...asRows(data, m));
-    if (all.length < 12) {
-      const p2 = await tmdb(path, { ...base, page: "2" });
-      all.push(...asRows(p2, m));
+
+    // Hindi strict: merge Hindi-language + Indian-origin pools for volume.
+    if (a.language === "hi" && strict) {
+      const hiBase: Record<string, string> = { ...base, with_original_language: "hi" };
+      delete hiBase.with_origin_country;
+      const inBase: Record<string, string> = { ...base, with_origin_country: "IN" };
+      delete inBase.with_original_language;
+      const [hiRows, inRows] = await Promise.all([
+        fetchDiscoverPages(path, hiBase, m, startPage),
+        fetchDiscoverPages(path, inBase, m, startPage),
+      ]);
+      all.push(...dedupeRows([...hiRows, ...inRows]));
+      continue;
     }
+
+    all.push(...await fetchDiscoverPages(path, base, m, startPage));
   }
-  return all;
+  return dedupeRows(all);
 }
 
 export type RecommendationResult = {
   picks: Pick[];
-  /** True when strict filters matched nothing and genres-only results are shown. */
   relaxed: boolean;
 };
 
-export async function getRecommendations(a: QuizAnswers): Promise<RecommendationResult> {
-  if (!key()) return { picks: demoPicks(a), relaxed: false };
+function wantedIds(a: QuizAnswers, m: "movie" | "tv"): Set<string> {
+  const ids = a.genres.length ? a.genres : MOOD_MAP[a.mood].genres.split(",");
+  return new Set(translateGenres(m, ids));
+}
 
-  // Strict pass (providers + language + runtime), then one relaxed pass
-  // (genres only). Relaxed results that match the vibe beat hardcoded
-  // demo titles that ignore the quiz entirely.
-  let all = await discover(a);
-  let relaxed = false;
-  if (!all.length) {
-    all = await discover(a, { relaxed: true });
-    relaxed = all.length > 0;
-  }
+function overlap(a: QuizAnswers, r: TmdbRow): number {
+  const want = wantedIds(a, r._media);
+  return (r.genre_ids || []).filter((g) => want.has(String(g))).length;
+}
 
-  /* Post-verification: never trust the API filter blindly. A result
-     only survives if at least one of ITS genre ids is one the user
-     actually asked for (tv ids translated). This is what stops a
-     Comedy/Adventure "Dog Man" landing in an Action/Crime/Horror list. */
-  const wantedIds = (m: "movie" | "tv"): Set<string> => {
-    const ids = a.genres.length ? a.genres : MOOD_MAP[a.mood].genres.split(",");
-    return new Set(translateGenres(m, ids));
-  };
-  const overlap = (r: TmdbRow): number => {
-    const want = wantedIds(r._media);
-    return (r.genre_ids || []).filter((g) => want.has(String(g))).length;
-  };
-
-  // Score + dedupe franchises (1 per base title)
+function scoreRows(a: QuizAnswers, all: TmdbRow[]): Array<{ r: TmdbRow; score: number }> {
   const seen = new Set<string>();
-  const scored = all
+  return all
     .filter((r) => r.poster_path)
-    .filter((r) => overlap(r) > 0)
+    .filter((r) => overlap(a, r) > 0)
     .map((r) => {
       const pop = Math.min((r.popularity || 0) / 200, 1);
       const vote = (r.vote_average || 0) / 10;
@@ -223,8 +244,7 @@ export async function getRecommendations(a: QuizAnswers): Promise<Recommendation
         10,
       );
       const recency = Math.max(0, Math.min(1, (year - 1995) / 30));
-      // Matching MORE of the asked genres outranks raw popularity.
-      const genreFit = Math.min(overlap(r) / 2, 1);
+      const genreFit = Math.min(overlap(a, r) / 2, 1);
       return { r, score: pop * 0.35 + vote * 0.25 + recency * 0.15 + genreFit * 0.25 };
     })
     .sort((x, y) => y.score - x.score)
@@ -237,92 +257,145 @@ export async function getRecommendations(a: QuizAnswers): Promise<Recommendation
       seen.add(base);
       return true;
     })
-    .slice(0, 8);
-
-  const picks: ScoredPick[] = [];
-  for (const { r, score } of scored) {
-    if (picks.length >= 5) break;
-    const m: "movie" | "tv" = r._media;
-    let providers: Pick["providers"] = [];
-    let runtime = "—";
-    let runtimeMin: number | null = null;
-    try {
-      const det = (await tmdb(`/${m}/${r.id}`, {
-        append_to_response: "watch/providers",
-      })) as TmdbDetails | null;
-      const inProviders = det?.["watch/providers"]?.results?.IN?.flatrate || [];
-      providers = inProviders.map((p) => ({
-        id: p.provider_id,
-        name: p.provider_name,
-        logo: p.logo_path
-          ? `https://image.tmdb.org/t/p/w92${p.logo_path}`
-          : null,
-      }));
-      if (m === "movie" && det?.runtime) {
-        runtimeMin = det.runtime;
-        runtime = `${det.runtime} min`;
-      }
-      if (m === "tv" && det?.number_of_seasons)
-        runtime = `${det.number_of_seasons} season(s)`;
-    } catch {
-      /* providers optional */
-    }
-    // Runtime truth-check: "under 90 min" must never ship a 140-min film
-    // that slipped the discover filter (stale cache, bad metadata).
-    if (a.time === "short" && m === "movie" && runtimeMin != null && runtimeMin > 105) {
-      continue;
-    }
-    // Matching genres first, so the chips read like the quiz answers.
-    const want = wantedIds(m);
-    const gnames = (r.genre_ids || [])
-      .map((g: number) => ({ id: String(g), name: GENRE_MAP[String(g)] || PROVIDER_MAP[String(g)] }))
-      .filter((g: { name: string }) => Boolean(g.name))
-      .sort((x: { id: string }, y: { id: string }) =>
-        want.has(x.id) && !want.has(y.id) ? -1 : !want.has(x.id) && want.has(y.id) ? 1 : 0,
-      )
-      .map((g: { name: string }) => g.name)
-      .slice(0, 3);
-    const title = r.title || r.name || "Untitled";
-    const year = (r.release_date || r.first_air_date || "").slice(0, 4);
-    picks.push({
-      id: r.id,
-      mediaType: m,
-      title,
-      year,
-      poster: r.poster_path ? `${IMG}${r.poster_path}` : null,
-      backdrop: r.backdrop_path
-        ? `https://image.tmdb.org/t/p/w780${r.backdrop_path}`
-        : null,
-      overview: r.overview || "",
-      rating: r.vote_average || 0,
-      voteCount: r.vote_count || 0,
-      runtimeOrSeasons: runtime,
-      genres: gnames,
-      providers,
-      hookLine: buildHookLine(a.mood, gnames, title),
-      _score: score,
-    });
-  }
-
-  // Titles actually on the user's OTTs float to the top.
-  if (a.providers.length) {
-    const mine = new Set(a.providers.map(Number));
-    picks.sort((x, y) => {
-      const xm = x.providers.some((p) => mine.has(p.id)) ? 1 : 0;
-      const ym = y.providers.some((p) => mine.has(p.id)) ? 1 : 0;
-      if (xm !== ym) return ym - xm;
-      return y._score - x._score;
-    });
-  }
-
-  if (!picks.length) return { picks: demoPicks(a), relaxed };
-
-  // Strip the internal rank before returning.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const clean = picks.map(({ _score, ...p }) => p);
-  return { picks: clean, relaxed };
+    .slice(0, CANDIDATE_POOL);
 }
 
 interface ScoredPick extends Pick {
   _score: number;
+}
+
+async function buildPick(
+  a: QuizAnswers,
+  r: TmdbRow,
+  score: number,
+  maxRuntimeMin = 105,
+): Promise<ScoredPick | null> {
+  const m: "movie" | "tv" = r._media;
+  let providers: Pick["providers"] = [];
+  let runtime = "—";
+  let runtimeMin: number | null = null;
+  try {
+    const det = (await tmdb(`/${m}/${r.id}`, {
+      append_to_response: "watch/providers",
+    })) as TmdbDetails | null;
+    const inProviders = det?.["watch/providers"]?.results?.IN?.flatrate || [];
+    providers = inProviders.map((p) => ({
+      id: p.provider_id,
+      name: p.provider_name,
+      logo: p.logo_path
+        ? `https://image.tmdb.org/t/p/w92${p.logo_path}`
+        : null,
+    }));
+    if (m === "movie" && det?.runtime) {
+      runtimeMin = det.runtime;
+      runtime = `${det.runtime} min`;
+    }
+    if (m === "tv" && det?.number_of_seasons)
+      runtime = `${det.number_of_seasons} season(s)`;
+  } catch {
+    /* providers optional */
+  }
+  if (a.time === "short" && m === "movie" && runtimeMin != null && runtimeMin > maxRuntimeMin) {
+    return null;
+  }
+
+  const want = wantedIds(a, m);
+  const gnames = (r.genre_ids || [])
+    .map((g: number) => ({ id: String(g), name: GENRE_MAP[String(g)] || PROVIDER_MAP[String(g)] }))
+    .filter((g: { name: string }) => Boolean(g.name))
+    .sort((x: { id: string }, y: { id: string }) =>
+      want.has(x.id) && !want.has(y.id) ? -1 : !want.has(x.id) && want.has(y.id) ? 1 : 0,
+    )
+    .map((g: { name: string }) => g.name)
+    .slice(0, 3);
+  const title = r.title || r.name || "Untitled";
+  const year = (r.release_date || r.first_air_date || "").slice(0, 4);
+  return {
+    id: r.id,
+    mediaType: m,
+    title,
+    year,
+    poster: r.poster_path ? `${IMG}${r.poster_path}` : null,
+    backdrop: r.backdrop_path
+      ? `https://image.tmdb.org/t/p/w780${r.backdrop_path}`
+      : null,
+    overview: r.overview || "",
+    rating: r.vote_average || 0,
+    voteCount: r.vote_count || 0,
+    runtimeOrSeasons: runtime,
+    genres: gnames,
+    providers,
+    hookLine: buildHookLine(a.mood, gnames, title),
+    _score: score,
+  };
+}
+
+async function rowsToPicks(
+  a: QuizAnswers,
+  scored: Array<{ r: TmdbRow; score: number }>,
+  maxRuntimeMin = 105,
+): Promise<ScoredPick[]> {
+  const picks: ScoredPick[] = [];
+  for (const { r, score } of scored) {
+    if (picks.length >= TARGET_PICKS) break;
+    const pick = await buildPick(a, r, score, maxRuntimeMin);
+    if (pick) picks.push(pick);
+  }
+  return picks;
+}
+
+function sortByProviders(a: QuizAnswers, picks: ScoredPick[]): void {
+  if (!a.providers.length) return;
+  const mine = new Set(a.providers.map(Number));
+  picks.sort((x, y) => {
+    const xm = x.providers.some((p) => mine.has(p.id)) ? 1 : 0;
+    const ym = y.providers.some((p) => mine.has(p.id)) ? 1 : 0;
+    if (xm !== ym) return ym - xm;
+    return y._score - x._score;
+  });
+}
+
+export async function getRecommendations(
+  a: QuizAnswers,
+  page = 1,
+): Promise<RecommendationResult> {
+  if (!key()) return { picks: demoPicks(a), relaxed: false };
+
+  let relaxed = false;
+  let all = await discover(a, { page });
+  let picks = await rowsToPicks(a, scoreRows(a, all));
+
+  // Soft-relaxed: keep language, drop OTT + runtime filters.
+  if (!picks.length) {
+    all = await discover(a, { softRelaxed: true, page });
+    picks = await rowsToPicks(a, scoreRows(a, all), 150);
+    relaxed = picks.length > 0;
+  }
+  // Full relaxed: genres/mood only.
+  if (!picks.length) {
+    all = await discover(a, { relaxed: true, page });
+    picks = await rowsToPicks(a, scoreRows(a, all));
+    relaxed = picks.length > 0;
+  }
+
+  // Still short? Pull the next TMDB page before giving up.
+  if (picks.length < TARGET_PICKS) {
+    const more = await discover(a, { relaxed, page: page + 2 });
+    if (more.length) {
+      const extra = scoreRows(a, more).filter(
+        ({ r }) => !picks.some((p) => p.id === r.id && p.mediaType === r._media),
+      );
+      const morePicks = await rowsToPicks(a, extra);
+      picks = [...picks, ...morePicks].slice(0, TARGET_PICKS);
+    }
+  }
+
+  sortByProviders(a, picks);
+
+  // Live API key present — never silently swap in demo titles.
+  if (!picks.length) return { picks: [], relaxed };
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const clean = picks.map(({ _score, ...p }) => p);
+  return { picks: clean, relaxed };
 }

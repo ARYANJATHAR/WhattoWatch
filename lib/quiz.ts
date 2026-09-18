@@ -68,12 +68,52 @@ export const GENRE_MAP: Record<string, string> = {
 
 export const PROVIDER_MAP: Record<string, string> = {
   "8": "Netflix",
-  "9": "Prime Video",
-  "122": "Hotstar",
-  "121": "JioCinema",
+  "119": "Prime Video",
+  "2336": "JioHotstar",
   "232": "Zee5",
   "237": "SonyLIV",
 };
+
+/** Legacy TMDB ids from older deployments / bookmarked URLs. */
+const PROVIDER_ALIASES: Record<string, string> = {
+  "9": "119",
+  "122": "2336",
+  "121": "2336",
+};
+
+export function normalizeProviders(ids: string[]): string[] {
+  const valid = new Set(Object.keys(PROVIDER_MAP));
+  return [
+    ...new Set(
+      ids
+        .map((id) => PROVIDER_ALIASES[id] || id)
+        .filter((id) => valid.has(id)),
+    ),
+  ];
+}
+
+/** Resolve contradictory format/time pairs before hitting TMDB. */
+export function resolveQuizConflicts(a: QuizAnswers): QuizAnswers {
+  let { format, time } = a;
+  if (format === "movie" && time === "binge") time = "any";
+  if (format === "tv" && (time === "short" || time === "standard")) time = "any";
+  if (time === "binge" && format === "movie") format = "tv";
+  if ((time === "short" || time === "standard") && format === "tv") format = "movie";
+  return { ...a, format, time, providers: normalizeProviders(a.providers) };
+}
+
+export function normalizeQuizAnswers(a: QuizAnswers): QuizAnswers {
+  return resolveQuizConflicts({ ...a, providers: normalizeProviders(a.providers) });
+}
+
+export function parseRecommendQuery(sp: URLSearchParams): {
+  quiz: QuizAnswers;
+  page: number;
+} {
+  const raw = parseInt(sp.get("page") || "1", 10);
+  const page = Number.isFinite(raw) && raw >= 1 && raw <= 20 ? raw : 1;
+  return { quiz: normalizeQuizAnswers(searchParamsToQuiz(sp)), page };
+}
 
 // Mood → TMDB genre ids + sort
 export const MOOD_MAP: Record<
@@ -133,6 +173,6 @@ export function searchParamsToQuiz(sp: URLSearchParams): QuizAnswers {
     time: oneOf(sp.get("time"), TIMES, "any"),
     genres: splitIds(sp.get("genres")).slice(0, 3),
     language: oneOf(sp.get("language"), LANGS, "either"),
-    providers: splitIds(sp.get("providers")),
+    providers: normalizeProviders(splitIds(sp.get("providers"))),
   };
 }

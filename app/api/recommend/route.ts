@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRecommendations } from "@/lib/tmdb";
-import { searchParamsToQuiz } from "@/lib/quiz";
+import { parseRecommendQuery } from "@/lib/quiz";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
 
 export async function GET(req: NextRequest) {
@@ -12,8 +12,8 @@ export async function GET(req: NextRequest) {
     );
   }
   try {
-    const quiz = searchParamsToQuiz(req.nextUrl.searchParams);
-    const { picks, relaxed } = await getRecommendations(quiz);
+    const { quiz, page } = parseRecommendQuery(req.nextUrl.searchParams);
+    const { picks, relaxed } = await getRecommendations(quiz, page);
     return NextResponse.json({ picks, relaxed, demo: !process.env.TMDB_API_KEY });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "recommend failed";

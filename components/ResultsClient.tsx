@@ -16,7 +16,7 @@ import {
   YoutubeLogo,
 } from "@phosphor-icons/react";
 import type { Pick, ShortResult } from "@/lib/quiz";
-import { picksCardFile } from "@/lib/shareCard";
+import { picksCardDataUrl, picksCardFile } from "@/lib/shareCard";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -306,30 +306,37 @@ export default function ResultsClient({ qs }: { qs: string }) {
   }, [qs]);
 
   const [sharing, setSharing] = useState(false);
+  const [sharePreview, setSharePreview] = useState<string | null>(null);
+  const [sharePreviewLoading, setSharePreviewLoading] = useState(false);
 
-  function fallbackLinkShare() {
-    navigator.clipboard
-      .writeText(window.location.href)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => {
-        prompt("Copy this link:", window.location.href);
-      });
+  function closeSharePreview() {
+    setSharePreview(null);
   }
 
-  async function share() {
+  async function openSharePreview() {
+    if (!picks?.length || sharePreviewLoading) return;
+    setSharePreviewLoading(true);
+    try {
+      const url = await picksCardDataUrl(picks);
+      if (url) setSharePreview(url);
+      else fallbackLinkShare();
+    } catch {
+      fallbackLinkShare();
+    } finally {
+      setSharePreviewLoading(false);
+    }
+  }
+
+  async function confirmShare() {
     if (!picks?.length || sharing) return;
     setSharing(true);
     try {
-      // 1. Native image share (WhatsApp / X / Instagram-ready PNG card)
       const file = await picksCardFile(picks);
       if (file && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: "My WhatoWatch picks" });
+        closeSharePreview();
         return;
       }
-      // 2. Download the card when native share isn't available (desktop)
       if (file) {
         const url = URL.createObjectURL(file);
         const a = document.createElement("a");
@@ -341,20 +348,27 @@ export default function ResultsClient({ qs }: { qs: string }) {
         setTimeout(() => URL.revokeObjectURL(url), 5000);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
+        closeSharePreview();
         return;
       }
     } catch (e: unknown) {
-      // User dismissed the sheet — stop, don't surprise-copy a link.
-      if (e instanceof DOMException && e.name === "AbortError") {
-        setSharing(false);
-        return;
-      }
-      /* canvas blocked or share failed — fall through to link */
+      if (e instanceof DOMException && e.name === "AbortError") return;
     } finally {
       setSharing(false);
     }
-    // 3. Plain link copy, last resort
     fallbackLinkShare();
+  }
+
+  function fallbackLinkShare() {
+    navigator.clipboard
+      .writeText(window.location.href)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        prompt("Copy this link:", window.location.href);
+      });
   }
 
   if (error)
@@ -429,16 +443,28 @@ export default function ResultsClient({ qs }: { qs: string }) {
           <p className="mono-micro mt-3 text-[#f9f5f2]">
             Watch the Shorts. The one that grabs you is tonight&apos;s answer.
             {demo && " (Demo data — add a TMDB key for live picks.)"}
-            {!demo && relaxed && " (Strict filters matched nothing — showing genre matches beyond your OTTs.)"}
+            {!demo && relaxed && " (Loosened OTT or runtime filters — still matched to your mood and language.)"}
           </p>
         </div>
         <div className="flex flex-wrap gap-2.5">
-          <button onClick={() => load(`${qs}&r=${Date.now()}`)} className="btn-outline">
+          <button
+            onClick={() => {
+              const params = new URLSearchParams(qs);
+              const cur = parseInt(params.get("page") || "1", 10);
+              params.set("page", String(Number.isFinite(cur) ? cur + 1 : 2));
+              load(params.toString());
+            }}
+            className="btn-outline"
+          >
             <ArrowClockwise size={16} weight="bold" /> New 5
           </button>
-          <button onClick={share} disabled={sharing} className="btn-outline disabled:opacity-60">
+          <button
+            onClick={openSharePreview}
+            disabled={sharePreviewLoading}
+            className="btn-outline disabled:opacity-60"
+          >
             {copied ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
-            {sharing ? "Making card…" : copied ? "Saved" : "Share card"}
+            {sharePreviewLoading ? "Making card…" : copied ? "Saved" : "Share card"}
           </button>
           <Link href="/quiz" className="btn-gate">
             <ArrowLeft size={16} weight="bold" /> Retake quiz
@@ -451,6 +477,56 @@ export default function ResultsClient({ qs }: { qs: string }) {
           <ResultCard key={`${p.id}-${i}`} pick={p} rank={i + 1} skin={CARD_SKINS[i % CARD_SKINS.length]} />
         ))}
       </motion.div>
+
+      {sharePreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Share card preview"
+          onClick={closeSharePreview}
+        >
+          <div
+            className="dark-text-card w-full max-w-md max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="mono-tag">★ Preview your share card</p>
+            <p className="mono-micro mt-1 text-[#1a1a1a]/70">
+              This is what friends will see before you send it.
+            </p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={sharePreview}
+              alt="WhatoWatch picks share card preview"
+              className="mt-4 w-full rounded-[6px] border-2 border-black"
+            />
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              <button onClick={confirmShare} disabled={sharing} className="btn-gate flex-1 justify-center">
+                <ShareNetwork size={16} weight="bold" />
+                {sharing ? "Sharing…" : "Share"}
+              </button>
+              <button
+                onClick={() => {
+                  const a = document.createElement("a");
+                  a.href = sharePreview;
+                  a.download = "whatowatch-picks.png";
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                className="btn-outline flex-1 justify-center"
+              >
+                Download
+              </button>
+              <button onClick={closeSharePreview} className="btn-outline w-full sm:w-auto justify-center">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -32,17 +32,20 @@ function fitText(
   return t + "…";
 }
 
-export async function picksCardFile(picks: Pick[]): Promise<File | null> {
+async function loadFonts(): Promise<void> {
   try {
-    // Use the real brand fonts when they're ready; fall back silently.
     await Promise.all([
-      document.fonts.load('400 120px Anton'),
-      document.fonts.load('700 40px Archivo'),
+      document.fonts.load("400 120px Anton"),
+      document.fonts.load("700 40px Archivo"),
       document.fonts.load('600 30px "JetBrains Mono"'),
     ]).catch(() => {});
   } catch {
     /* fonts API unavailable — system fallbacks below */
   }
+}
+
+async function renderPicksCard(picks: Pick[]): Promise<HTMLCanvasElement | null> {
+  await loadFonts();
 
   const canvas = document.createElement("canvas");
   canvas.width = W;
@@ -50,11 +53,9 @@ export async function picksCardFile(picks: Pick[]): Promise<File | null> {
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 
-  // Stage
   ctx.fillStyle = BG;
   ctx.fillRect(0, 0, W, H);
 
-  // Confetti dots
   const dots: Array<[number, number, number, string]> = [
     [90, 120, 16, YELLOW],
     [990, 180, 20, "#f8c1ba"],
@@ -73,20 +74,17 @@ export async function picksCardFile(picks: Pick[]): Promise<File | null> {
     ctx.stroke();
   }
 
-  // Wordmark
   ctx.textAlign = "center";
   ctx.fillStyle = YELLOW;
   ctx.font = '600 34px "JetBrains Mono", monospace';
   ctx.fillText("★ WHATOWATCH", W / 2, 120);
 
-  // Headline
   ctx.font = '400 150px Anton, "Arial Narrow", sans-serif';
   ctx.fillStyle = YELLOW;
   ctx.fillText("MY FIVE", W / 2, 280);
   ctx.fillStyle = BONE;
   ctx.fillText("PICKS.", W / 2, 425);
 
-  // Pick rows — bone cards, ink text
   const top = 500;
   const rowH = 128;
   const gap = 22;
@@ -99,18 +97,15 @@ export async function picksCardFile(picks: Pick[]): Promise<File | null> {
     ctx.strokeStyle = BLACK;
     ctx.stroke();
 
-    // Rank
     ctx.textAlign = "left";
     ctx.fillStyle = INK;
     ctx.font = '400 64px Anton, "Arial Narrow", sans-serif';
     ctx.fillText(String(i + 1).padStart(2, "0"), 116, y + 84);
 
-    // Title (year)
-    ctx.font = '700 40px Archivo, sans-serif';
+    ctx.font = "700 40px Archivo, sans-serif";
     const title = fitText(ctx, `${p.title} (${p.year || "—"})`, 560);
     ctx.fillText(title, 230, y + 58);
 
-    // Rating + genres
     ctx.font = '600 28px "JetBrains Mono", monospace';
     const sub = fitText(
       ctx,
@@ -119,18 +114,28 @@ export async function picksCardFile(picks: Pick[]): Promise<File | null> {
     );
     ctx.fillText(sub, 230, y + 100);
 
-    // Media tag
     ctx.textAlign = "right";
     ctx.font = '600 26px "JetBrains Mono", monospace';
     ctx.fillText(p.mediaType === "tv" ? "SERIES" : "FILM", W - 116, y + 84);
   });
 
-  // Footer
   ctx.textAlign = "center";
   ctx.fillStyle = BONE;
   ctx.font = '600 30px "JetBrains Mono", monospace';
   ctx.fillText("STOP SCROLLING · START WATCHING", W / 2, H - 70);
 
+  return canvas;
+}
+
+export async function picksCardDataUrl(picks: Pick[]): Promise<string | null> {
+  const canvas = await renderPicksCard(picks);
+  if (!canvas) return null;
+  return canvas.toDataURL("image/png");
+}
+
+export async function picksCardFile(picks: Pick[]): Promise<File | null> {
+  const canvas = await renderPicksCard(picks);
+  if (!canvas) return null;
   const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, "image/png"));
   if (!blob) return null;
   return new File([blob], "whatowatch-picks.png", { type: "image/png" });

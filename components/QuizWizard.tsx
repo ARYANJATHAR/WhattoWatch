@@ -20,7 +20,7 @@ import {
   TelevisionSimple,
   Shuffle,
 } from "@phosphor-icons/react";
-import { GENRE_MAP, PROVIDER_MAP, quizToSearchParams } from "@/lib/quiz";
+import { GENRE_MAP, PROVIDER_MAP, quizToSearchParams, resolveQuizConflicts } from "@/lib/quiz";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const SPRING = { type: "spring" as const, stiffness: 100, damping: 20 };
@@ -75,7 +75,7 @@ export default function QuizWizard() {
   const [time, setTime] = useState("any");
   const [genres, setGenres] = useState<string[]>([]);
   const [language, setLanguage] = useState<"hi" | "en" | "either">("either");
-  const [providers, setProviders] = useState<string[]>(["8", "9"]);
+  const [providers, setProviders] = useState<string[]>(["8", "119"]);
 
   const progress = useMemo(() => ((step + 1) / STEPS.length) * 100, [step]);
   const meta = STEPS[step];
@@ -84,10 +84,36 @@ export default function QuizWizard() {
     setDir(n > step ? 1 : -1);
     setStep(n);
   }
+  function pickFormat(id: "movie" | "tv" | "either") {
+    const next = resolveQuizConflicts({
+      format: id,
+      mood: mood as never,
+      time: time as never,
+      genres,
+      language,
+      providers,
+    });
+    setFormat(next.format);
+    setTime(next.time);
+  }
+
+  function pickTime(id: "short" | "standard" | "binge" | "any") {
+    const next = resolveQuizConflicts({
+      format,
+      mood: mood as never,
+      time: id,
+      genres,
+      language,
+      providers,
+    });
+    setFormat(next.format);
+    setTime(next.time);
+  }
+
   function next() {
     if (step < STEPS.length - 1) go(step + 1);
     else {
-      const qs = quizToSearchParams({
+      const resolved = resolveQuizConflicts({
         format,
         mood: mood as never,
         time: time as never,
@@ -95,6 +121,7 @@ export default function QuizWizard() {
         language,
         providers,
       });
+      const qs = quizToSearchParams(resolved);
       router.push(`/results?${qs.toString()}`);
     }
   }
@@ -166,7 +193,7 @@ export default function QuizWizard() {
                       key={o.id}
                       variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
                       className={optionCls(format === o.id)}
-                      onClick={() => setFormat(o.id)}
+                      onClick={() => pickFormat(o.id)}
                     >
                       <span className={iconBox(format === o.id)}>
                         <o.icon size={22} weight="duotone" />
@@ -204,7 +231,7 @@ export default function QuizWizard() {
                       key={o.id}
                       variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
                       className={optionCls(time === o.id)}
-                      onClick={() => setTime(o.id)}
+                      onClick={() => pickTime(o.id)}
                     >
                       <span className={iconBox(time === o.id)}>
                         <o.icon size={22} weight="duotone" />
