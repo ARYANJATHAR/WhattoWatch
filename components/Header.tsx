@@ -1,6 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { GithubLogo, LinkedinLogo, XLogo } from "@phosphor-icons/react";
+
+const SOCIALS = [
+  { href: "https://github.com/ARYANJATHAR", label: "GitHub", Icon: GithubLogo },
+  { href: "https://x.com/ARYANJATHAR4", label: "X", Icon: XLogo },
+  { href: "https://www.linkedin.com/in/aryanjathar07/", label: "LinkedIn", Icon: LinkedinLogo },
+];
 
 export default function Header() {
   return (
@@ -23,9 +30,23 @@ export default function Header() {
           WHATOWATCH
         </Link>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
           <span className="mono-tag hidden lg:inline text-[#f9f5f2]/80">
             6 Qs · 5 Picks · 1 Night
+          </span>
+          <span className="hidden sm:flex items-center gap-1.5">
+            {SOCIALS.map(({ href, label, Icon }) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="me noreferrer"
+                aria-label={label}
+                className="grid place-items-center w-9 h-9 rounded-full border border-[#f9f5f2]/40 text-[#f9f5f2] transition-colors hover:text-[#f4ed36] hover:border-[#f4ed36]"
+              >
+                <Icon size={17} weight="bold" />
+              </a>
+            ))}
           </span>
           <Link href="/quiz" className="btn-gate !py-2.5 !px-5 !text-sm">
             Find a watch

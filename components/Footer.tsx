@@ -12,7 +12,7 @@ export default function Footer() {
             5 picks, 5 hooks. Ratings by TMDB. Hooks play from YouTube, credit to the creators.
           </p>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link href="/quiz" className="mono-tag text-[#f9f5f2] hover:text-[#f4ed36] transition-colors">
             Take the quiz
           </Link>
@@ -22,6 +22,15 @@ export default function Footer() {
           >
             Surprise me
           </Link>
+          <a href="https://github.com/ARYANJATHAR" target="_blank" rel="me noreferrer" className="mono-tag text-[#f9f5f2] hover:text-[#f4ed36] transition-colors">
+            GitHub
+          </a>
+          <a href="https://x.com/ARYANJATHAR4" target="_blank" rel="me noreferrer" className="mono-tag text-[#f9f5f2] hover:text-[#f4ed36] transition-colors">
+            X
+          </a>
+          <a href="https://www.linkedin.com/in/aryanjathar07/" target="_blank" rel="me noreferrer" className="mono-tag text-[#f9f5f2] hover:text-[#f4ed36] transition-colors">
+            LinkedIn
+          </a>
           <span className="mono-tag text-[#f9f5f2]/50">© 2026</span>
         </div>
       </div>

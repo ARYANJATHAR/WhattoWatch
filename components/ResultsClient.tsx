@@ -16,6 +16,7 @@ import {
   YoutubeLogo,
 } from "@phosphor-icons/react";
 import type { Pick, ShortResult } from "@/lib/quiz";
+import { picksCardFile } from "@/lib/shareCard";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -54,12 +55,26 @@ function ShortBox({ title, year, kind }: { title: string; year: string; kind: "m
 
   useEffect(() => {
     let live = true;
+    // Local fallback: network/rate-limit failure must show the search-link
+    // card, never a permanent loading shimmer.
+    const localFallback: ShortResult = {
+      videoId: null,
+      title: null,
+      channel: null,
+      views: null,
+      thumbnail: null,
+      embedUrl: null,
+      watchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${year} best scene short`)}`,
+      fallback: true,
+    };
     fetch(`/api/shorts?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year)}&kind=${kind}`)
       .then((r) => r.json())
       .then((d) => {
-        if (live) setShort(d.short);
+        if (live) setShort(d.short ?? localFallback);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) setShort(localFallback);
+      });
     return () => {
       live = false;
     };
@@ -290,14 +305,56 @@ export default function ResultsClient({ qs }: { qs: string }) {
     load(qs);
   }, [qs]);
 
+  const [sharing, setSharing] = useState(false);
+
+  function fallbackLinkShare() {
+    navigator.clipboard
+      .writeText(window.location.href)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => {
+        prompt("Copy this link:", window.location.href);
+      });
+  }
+
   async function share() {
+    if (!picks?.length || sharing) return;
+    setSharing(true);
     try {
-      await navigator.clipboard.writeText(window.location.href);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      prompt("Copy this link:", window.location.href);
+      // 1. Native image share (WhatsApp / X / Instagram-ready PNG card)
+      const file = await picksCardFile(picks);
+      if (file && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "My WhatoWatch picks" });
+        return;
+      }
+      // 2. Download the card when native share isn't available (desktop)
+      if (file) {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "whatowatch-picks.png";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      }
+    } catch (e: unknown) {
+      // User dismissed the sheet — stop, don't surprise-copy a link.
+      if (e instanceof DOMException && e.name === "AbortError") {
+        setSharing(false);
+        return;
+      }
+      /* canvas blocked or share failed — fall through to link */
+    } finally {
+      setSharing(false);
     }
+    // 3. Plain link copy, last resort
+    fallbackLinkShare();
   }
 
   if (error)
@@ -379,9 +436,9 @@ export default function ResultsClient({ qs }: { qs: string }) {
           <button onClick={() => load(`${qs}&r=${Date.now()}`)} className="btn-outline">
             <ArrowClockwise size={16} weight="bold" /> New 5
           </button>
-          <button onClick={share} className="btn-outline">
+          <button onClick={share} disabled={sharing} className="btn-outline disabled:opacity-60">
             {copied ? <Check size={16} weight="bold" /> : <ShareNetwork size={16} weight="bold" />}
-            {copied ? "Copied" : "Share"}
+            {sharing ? "Making card…" : copied ? "Saved" : "Share card"}
           </button>
           <Link href="/quiz" className="btn-gate">
             <ArrowLeft size={16} weight="bold" /> Retake quiz
