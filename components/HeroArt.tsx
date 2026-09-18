@@ -88,9 +88,9 @@ export default function HeroArt() {
       <div className="animate-float">
         <Mascot className="w-64 sm:w-80 md:w-[380px] h-auto drop-shadow-none" />
       </div>
-      <div className="absolute -bottom-2 left-0 right-0 flex justify-center">
-        <div className="bg-[#1a1a1a] text-[#f4ed36] rounded-full px-5 py-2 border-2 border-black">
-          <span className="mono-tag">★ Top hook this week · 8.7 · 2.4M watched the short first</span>
+      <div className="absolute -bottom-2 left-0 right-0 flex justify-center px-4">
+        <div className="bg-[#1a1a1a] text-[#f4ed36] rounded-full px-5 py-2.5 border-2 border-black max-w-full">
+          <span className="mono-tag block text-center">★ Now showing · tonight&apos;s feature presentation</span>
         </div>
       </div>
     </motion.div>

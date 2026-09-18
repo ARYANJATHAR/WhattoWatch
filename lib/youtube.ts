@@ -75,9 +75,55 @@ function durationSecs(iso: string | undefined): number | null {
 
 type SearchHit = { id: string; title: string; description: string };
 
-/* Query-level filters: minus-terms push sports/news/gaming out of the
+/* YouTube's own category labels — the strongest "is this actually film
+   content" signal the API gives us. Fan edits live in 1/24/23; ads and
+   off-topic uploads live everywhere else. A title keyword inside a
+   Sports/Gaming/News upload is never our scene. */
+const REJECT_CATEGORIES = new Set([
+  "2", // Autos & Vehicles
+  "15", // Pets & Animals
+  "17", // Sports
+  "19", // Travel & Events
+  "20", // Gaming
+  "25", // News & Politics
+  "26", // Howto & Style
+  "27", // Education
+  "28", // Science & Technology
+  "29", // Nonprofits & Activism
+]);
+const BOOST_CATEGORIES = new Set([
+  "1", // Film & Animation
+  "24", // Entertainment
+  "23", // Comedy
+]);
+
+/* Sponsored/promo uploads that merely borrow the title ("Dangal LED TV
+   ad", ticket promos, brand integrations). Real scenes don't carry these. */
+const AD_MARKERS = [
+  "sponsored by",
+  "#ad",
+  "paid promotion",
+  "use code",
+  "promo code",
+  "discount code",
+  "coupon code",
+  "giveaway",
+  "shop now",
+  "buy now",
+  "limited offer",
+  "affiliate link",
+  "brand collaboration",
+];
+
+function adMarkers(hay: string): number {
+  let n = 0;
+  for (const m of AD_MARKERS) if (hay.includes(m)) n++;
+  return n;
+}
+
+/* Query-level filters: minus-terms push sports/news/gaming/ads out of the
    result set before we ever see it. ("Run" + cricket = the bug above.) */
-const QUERY_MINUS = '-cricket -football -ipl -soccer -election -gameplay -minecraft -pubg -bgmi -vlog -recipe -stock -crypto';
+const QUERY_MINUS = '-cricket -football -ipl -soccer -election -gameplay -minecraft -pubg -bgmi -vlog -recipe -stock -crypto -advertisement -sponsored -commercial';
 
 async function searchHits(apiKey: string, q: string): Promise<SearchHit[]> {
   const sUrl = new URL(`${YT_BASE}/search`);
@@ -146,7 +192,7 @@ function isAboutTitle(hit: SearchHit, title: string, year: string): boolean {
 
 type YtVideo = {
   id: string;
-  snippet?: { title?: string; channelTitle?: string };
+  snippet?: { title?: string; channelTitle?: string; categoryId?: string; description?: string };
   statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
   contentDetails?: { duration?: string };
 };
@@ -200,6 +246,8 @@ export async function getTopShort(
     const candidates = ((vData.items || []) as YtVideo[])
       .map((v) => {
         const vTitle = v.snippet?.title || "";
+        const vDesc = v.snippet?.description || "";
+        const combined = `${vTitle} ${vDesc}`;
         const rel = relevance(vTitle, keys);
         const secs = durationSecs(v.contentDetails?.duration);
         const views = parseInt(v.statistics?.viewCount || "0", 10);
@@ -209,16 +257,31 @@ export async function getTopShort(
         const shortEnough = secs == null || secs <= 300;
         // Second gate at detail stage (snippet can differ from search data).
         const about = isAboutTitle(
-          { id: v.id, title: vTitle, description: "" },
+          { id: v.id, title: vTitle, description: vDesc },
           title,
           year,
         );
+        // Category gate: a title word inside Sports/Gaming/News/etc. is an
+        // ad or off-topic upload, never the film. Film/Entertainment/Comedy
+        // uploads get a ranking boost instead.
+        const cat = v.snippet?.categoryId || "";
+        const wrongShelf = REJECT_CATEGORIES.has(cat);
+        const rightShelf = BOOST_CATEGORIES.has(cat) ? 3 : 0;
+        // Ad gate: promo/sponsored uploads borrowing the title. One marker
+        // with a weak title match = out; stacked markers = always out.
+        const ads = adMarkers(clean(combined));
+        const isAd = ads >= 2 || (ads >= 1 && rel < 1);
         const yearBonus = year && clean(vTitle).includes(` ${year} `) ? 2 : 0;
         const engagement = Math.log10(views + likes * 10 + comments * 20 + 10);
-        return { v, rel, views, shortEnough, about, score: rel * 10 + yearBonus + engagement };
+        return {
+          v, rel, views, shortEnough, about,
+          score: rel * 10 + yearBonus + rightShelf + engagement,
+          usable: about && !wrongShelf && !isAd,
+        };
       })
-      // Must be about THIS title and short enough to embed as a hook.
-      .filter((c) => c.about && c.rel >= (keys.length <= 1 ? 0 : 0.5) && c.shortEnough)
+      // Must be about THIS title, on a film shelf, not an ad, and short
+      // enough to embed as a hook.
+      .filter((c) => c.usable && c.rel >= (keys.length <= 1 ? 0 : 0.5) && c.shortEnough)
       .sort((a, b) => b.score - a.score);
 
     const top = candidates[0];

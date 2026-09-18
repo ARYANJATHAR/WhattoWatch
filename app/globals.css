@@ -210,6 +210,19 @@ html, body {
   box-shadow: none !important;
 }
 
+/* Riso cards: no shadows allowed, so hover = lift + tilt.
+   Uses `transform` (Tailwind v4 translate utilities use the separate
+   `translate` property, so the two compose instead of clashing). */
+.card-hover {
+  transition: transform 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-5px) rotate(-0.4deg);
+}
+.card-hover:active {
+  transform: translateY(-1px) scale(0.99);
+}
+
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 

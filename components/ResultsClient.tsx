@@ -155,7 +155,7 @@ function ResultCard({ pick, rank, skin }: { pick: Pick; rank: number; skin: { bg
   return (
     <motion.article
       variants={card}
-      className="rounded-[6px] border-2 border-black p-[17px] md:p-6 relative overflow-hidden"
+      className="rounded-[6px] border-2 border-black p-[17px] md:p-6 relative overflow-hidden card-hover"
       style={{ background: skin.bg, color: skin.ink }}
     >
       <span

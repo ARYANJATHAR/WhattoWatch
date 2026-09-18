@@ -100,7 +100,7 @@ export default function Home() {
           {STEPS.map((s, i) => (
             <Reveal key={s.n} delay={0.06 * i}>
               <article
-                className="confetti-card border-2 border-black min-h-[240px] flex flex-col justify-between"
+                className="confetti-card card-hover border-2 border-black min-h-[240px] flex flex-col justify-between"
                 style={{ background: s.bg, color: s.ink }}
               >
                 <div className="flex items-start justify-between">
@@ -126,17 +126,17 @@ export default function Home() {
               No endless grid. No forty-minute scroll. Just the reel.
             </p>
             <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <div className="confetti-card border-2 border-black bg-[#b5c995] text-[#1a1a1a]">
+              <div className="confetti-card card-hover border-2 border-black bg-[#b5c995] text-[#1a1a1a]">
                 <p className="mono-tag">Reel 01 ★ Real ratings</p>
                 <p className="font-poster mt-2 text-2xl leading-[0.95]">TMDB-POWERED, NO FILLER</p>
                 <p className="mt-2 text-sm font-medium">Only titles rated 6.5+ by thousands of viewers make the cut.</p>
               </div>
-              <div className="confetti-card border-2 border-black bg-[#f4ed36] text-black">
+              <div className="confetti-card card-hover border-2 border-black bg-[#f4ed36] text-black">
                 <p className="mono-tag">Reel 02 ★ Your OTTs only</p>
                 <p className="font-poster mt-2 text-2xl leading-[0.95]">STREAMING WHERE YOU PAY</p>
                 <p className="mt-2 text-sm font-medium">Every pick is filtered to Netflix, Prime, Hotstar &amp; co. — playable tonight.</p>
               </div>
-              <div className="confetti-card border-2 border-black bg-[#f8c1ba] text-[#1a1a1a]">
+              <div className="confetti-card card-hover border-2 border-black bg-[#f8c1ba] text-[#1a1a1a]">
                 <p className="mono-tag">Reel 03 ★ 30-sec hooks</p>
                 <p className="font-poster mt-2 text-2xl leading-[0.95]">WATCH THE SHORT, FEEL IT</p>
                 <p className="mt-2 text-sm font-medium">Five hype Shorts, one gut reaction. The one that grabs you wins.</p>

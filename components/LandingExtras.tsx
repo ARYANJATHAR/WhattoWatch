@@ -60,7 +60,7 @@ export function MoodRail() {
           <Reveal key={m.label} delay={0.06 * i} className="shrink-0">
             <Link
               href="/quiz"
-              className="confetti-card group flex items-center gap-4 w-72 border-2 border-black"
+              className="confetti-card card-hover group flex items-center gap-4 w-72 border-2 border-black"
               style={{ background: m.bg, color: m.ink }}
             >
               <span className="grid place-items-center w-12 h-12 rounded-[6px] border-2 border-black bg-[#f9f5f2] text-black shrink-0">

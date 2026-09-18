@@ -105,7 +105,7 @@ export default function QuizWizard() {
   }
 
   const optionCls = (active: boolean) =>
-    `group flex w-full items-center gap-4 rounded-[6px] border-2 p-4 sm:p-5 text-left transition-transform duration-200 hover:-translate-y-0.5 active:scale-[0.98] ${
+    `group flex w-full items-center gap-4 rounded-[6px] border-2 p-4 sm:p-5 text-left transition-transform duration-200 hover:-translate-y-0.5 card-hover active:scale-[0.98] ${
       active
         ? "border-black bg-[#f4ed36] text-black"
         : "border-black bg-[#f9f5f2] text-[#1a1a1a] hover:bg-[#f9cc73]"
