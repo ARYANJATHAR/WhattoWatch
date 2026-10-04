@@ -5,6 +5,7 @@ import Header from "../components/Header";
 import Footer from "../components/Footer";
 import ThemeProvider from "../components/ThemeProvider";
 import { siteUrl } from "../lib/site";
+import { connection } from "next/server";
 
 const display = Anton({ weight: "400", subsets: ["latin"], variable: "--font-display" });
 const bodyBold = Archivo({ weight: ["700", "800"], subsets: ["latin"], variable: "--font-body-bold" });
@@ -40,11 +41,13 @@ export const viewport: Viewport = {
   themeColor: "#8584bd",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // Nonces must be generated per request, never embedded in a static page.
+  await connection();
   return (
     <html lang="en" className="h-full antialiased">
       <body
