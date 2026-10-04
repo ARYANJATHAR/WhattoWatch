@@ -49,7 +49,7 @@ function formatViews(v: number | null) {
   return `${v} views`;
 }
 
-function ShortBox({ title, year, kind }: { title: string; year: string; kind: "movie" | "tv" }) {
+function ShortBox({ title, year, token }: { title: string; year: string; token?: string }) {
   const [short, setShort] = useState<ShortResult | null>(null);
   const [playing, setPlaying] = useState(false);
 
@@ -67,8 +67,9 @@ function ShortBox({ title, year, kind }: { title: string; year: string; kind: "m
       watchUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(`${title} ${year} best scene short`)}`,
       fallback: true,
     };
-    fetch(`/api/shorts?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year)}&kind=${kind}`)
-      .then((r) => r.json())
+    const request = token ? fetch(`/api/shorts?token=${encodeURIComponent(token)}`) : Promise.resolve(null);
+    request
+      .then((r) => r ? r.json() : { short: localFallback })
       .then((d) => {
         if (live) setShort(d.short ?? localFallback);
       })
@@ -78,7 +79,7 @@ function ShortBox({ title, year, kind }: { title: string; year: string; kind: "m
     return () => {
       live = false;
     };
-  }, [title, year, kind]);
+  }, [title, year, token]);
 
   if (!short)
     return (
@@ -251,7 +252,7 @@ function ResultCard({ pick, rank, skin }: { pick: Pick; rank: number; skin: { bg
         </div>
 
         <div className="md:order-3">
-          <ShortBox title={pick.title} year={pick.year} kind={pick.mediaType} />
+          <ShortBox title={pick.title} year={pick.year} token={pick.shortToken} />
         </div>
       </div>
     </motion.article>

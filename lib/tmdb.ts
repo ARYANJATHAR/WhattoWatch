@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   GENRE_MAP,
   MOOD_MAP,
@@ -43,6 +44,9 @@ interface TmdbDetails {
 }
 
 const FETCH_TIMEOUT_MS = 10_000;
+type Work = { signal: AbortSignal; calls: number; details: number; memo: Map<string, Promise<unknown>> };
+const work = new AsyncLocalStorage<Work>();
+class WorkLimitError extends Error {}
 
 async function tmdb(path: string, params: Record<string, string>): Promise<unknown> {
   const k = key();
@@ -53,11 +57,27 @@ async function tmdb(path: string, params: Record<string, string>): Promise<unkno
   for (const [kk, vv] of Object.entries(params)) {
     if (vv) url.searchParams.set(kk, vv);
   }
+  const context = work.getStore();
+  if (!context) throw new Error("Missing request budget");
+  context.signal.throwIfAborted();
+  const memoKey = url.toString();
+  const previous = context.memo.get(memoKey);
+  if (previous) return previous;
+  const detail = !path.startsWith("/discover/");
+  if (context.calls >= 32 || (detail && context.details >= 12)) throw new WorkLimitError("Recommendation work limit reached");
+  context.calls++;
+  if (detail) context.details++;
+  const task = fetchTmdb(url, context.signal);
+  context.memo.set(memoKey, task);
+  return task;
+}
+
+async function fetchTmdb(url: URL, signal: AbortSignal): Promise<unknown> {
   const res = await fetch(url.toString(), {
     next: { revalidate: 3600 },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]),
   });
-  if (!res.ok) throw new Error(`TMDB ${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error("Movie service unavailable");
   return res.json() as Promise<unknown>;
 }
 
@@ -292,7 +312,8 @@ async function buildPick(
     }
     if (m === "tv" && det?.number_of_seasons)
       runtime = `${det.number_of_seasons} season(s)`;
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkLimitError || work.getStore()?.signal.aborted) throw error;
     /* providers optional */
   }
   if (a.time === "short" && m === "movie" && runtimeMin != null && runtimeMin > maxRuntimeMin) {
@@ -336,12 +357,12 @@ async function rowsToPicks(
   maxRuntimeMin = 105,
 ): Promise<ScoredPick[]> {
   const picks: ScoredPick[] = [];
-  for (const { r, score } of scored) {
-    if (picks.length >= TARGET_PICKS) break;
-    const pick = await buildPick(a, r, score, maxRuntimeMin);
-    if (pick) picks.push(pick);
+  for (let i = 0; i < scored.length && picks.length < TARGET_PICKS; i += 3) {
+    const batch = scored.slice(i, i + 3);
+    const results = await Promise.all(batch.map(({ r, score }) => buildPick(a, r, score, maxRuntimeMin)));
+    for (const pick of results) if (pick) picks.push(pick);
   }
-  return picks;
+  return picks.slice(0, TARGET_PICKS);
 }
 
 function sortByProviders(a: QuizAnswers, picks: ScoredPick[]): void {
@@ -355,7 +376,7 @@ function sortByProviders(a: QuizAnswers, picks: ScoredPick[]): void {
   });
 }
 
-export async function getRecommendations(
+async function buildRecommendations(
   a: QuizAnswers,
   page = 1,
 ): Promise<RecommendationResult> {
@@ -398,4 +419,23 @@ export async function getRecommendations(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const clean = picks.map(({ _score, ...p }) => p);
   return { picks: clean, relaxed };
+}
+
+const resultCache = new Map<string, { expires: number; result: RecommendationResult }>();
+let active = 0;
+export async function getRecommendations(a: QuizAnswers, page = 1, requestSignal?: AbortSignal): Promise<RecommendationResult> {
+  if (!key()) return { picks: demoPicks(a), relaxed: false };
+  const cacheKey = JSON.stringify({ ...a, genres: [...a.genres].sort(), providers: [...a.providers].sort(), page });
+  const cached = resultCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) return cached.result;
+  if (active >= 4) throw new WorkLimitError("Recommendation capacity reached");
+  active++;
+  const deadline = AbortSignal.timeout(18_000);
+  const signal = requestSignal ? AbortSignal.any([deadline, requestSignal]) : deadline;
+  try {
+    const result = await work.run({ signal, calls: 0, details: 0, memo: new Map() }, () => buildRecommendations(a, page));
+    if (resultCache.size >= 200) resultCache.delete(resultCache.keys().next().value!);
+    resultCache.set(cacheKey, { result, expires: Date.now() + 5 * 60_000 });
+    return result;
+  } finally { active--; }
 }

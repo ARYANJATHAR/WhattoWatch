@@ -1,24 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRecommendations } from "@/lib/tmdb";
 import { parseRecommendQuery } from "@/lib/quiz";
-import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { apiRateLimit } from "@/lib/ratelimit";
+import { signShort } from "@/lib/short-token";
 
 export async function GET(req: NextRequest) {
-  const { ok, retryAfterSec } = rateLimit(clientIp(req), { limit: 30, windowMs: 60_000 });
+  const { ok, retryAfterSec, unavailable } = await apiRateLimit(req, "recommend", 15);
   if (!ok) {
     return NextResponse.json(
-      { error: "Too many requests — take a breath and retry." },
-      { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+      { error: unavailable ? "Recommendations are temporarily unavailable." : "Too many requests — take a breath and retry." },
+      { status: unavailable ? 503 : 429, headers: { "Retry-After": String(retryAfterSec), "Cache-Control": "no-store" } },
     );
   }
   try {
     const { quiz, page } = parseRecommendQuery(req.nextUrl.searchParams);
-    const { picks, relaxed } = await getRecommendations(quiz, page);
-    return NextResponse.json({ picks, relaxed, demo: !process.env.TMDB_API_KEY });
-  } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "recommend failed";
-    // Never leak upstream internals/keys — status only.
-    const safe = message.startsWith("TMDB ") ? "Movie service is down — try again." : message;
-    return NextResponse.json({ error: safe }, { status: 500 });
+    const { picks, relaxed } = await getRecommendations(quiz, page, req.signal);
+    return NextResponse.json({ picks: picks.map(p => ({ ...p, shortToken: signShort(p.title, p.year, p.mediaType) })), relaxed, demo: !process.env.TMDB_API_KEY }, { headers: { "Cache-Control": "no-store" } });
+  } catch {
+    return NextResponse.json({ error: "Movie service is unavailable — try again." }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

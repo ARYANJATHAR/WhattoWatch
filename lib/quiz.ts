@@ -8,6 +8,7 @@ export type QuizAnswers = {
 };
 
 export type Pick = {
+  shortToken?: string;
   id: number;
   mediaType: "movie" | "tv";
   title: string;

@@ -1,11 +1,11 @@
 import type { ShortResult } from "./quiz";
+import { randomUUID } from "node:crypto";
+import { hasSecurityStore, redis, reserveBudget, storeKey } from "./security-store";
 
 const YT_BASE = "https://www.googleapis.com/youtube/v3";
 
-// In-memory cache (per server instance) — 7 day TTL to protect quota.
-// Bounded + successes only: a transient failure must never poison the
-// cache, and the map must never grow without limit.
-const cache = new Map<string, { at: number; data: ShortResult }>();
+const cache = new Map<string, { expires: number; data: ShortResult }>();
+const pending = new Map<string, Promise<ShortResult>>();
 const TTL = 7 * 24 * 60 * 60 * 1000;
 const MAX_CACHE = 500;
 
@@ -14,7 +14,23 @@ function cacheSet(k: string, data: ShortResult) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
   }
-  cache.set(k, { at: Date.now(), data });
+  cache.set(k, { expires: Date.now() + (data.fallback ? 60_000 : TTL), data });
+}
+
+async function reserveYouTube(cost: number): Promise<void> {
+  // YouTube resets its daily quota at midnight Pacific, including DST.
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  if (!await reserveBudget(`youtube:quota:${day}`, cost, 8000, 26 * 60 * 60_000)) throw new Error("Clip budget exhausted");
+}
+
+async function youtubeFetch(url: string, signal: AbortSignal): Promise<Response> {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    // Shared cooldown prevents repeatedly spending quota during an upstream outage.
+    await redis(["SET", "whatowatch:youtube:cooldown", "1", "EX", 60]);
+    throw new Error("Clip service unavailable");
+  }
+  return response;
 }
 
 function ytKey(): string | null {
@@ -130,7 +146,7 @@ function adMarkers(hay: string): number {
    result set before we ever see it. ("Run" + cricket = the bug above.) */
 const QUERY_MINUS = '-cricket -football -ipl -soccer -election -gameplay -minecraft -pubg -bgmi -vlog -recipe -stock -crypto -advertisement -sponsored -commercial';
 
-async function searchHits(apiKey: string, q: string): Promise<SearchHit[]> {
+async function searchHits(apiKey: string, q: string, signal: AbortSignal): Promise<SearchHit[]> {
   const sUrl = new URL(`${YT_BASE}/search`);
   sUrl.searchParams.set("part", "snippet");
   sUrl.searchParams.set("type", "video");
@@ -142,8 +158,8 @@ async function searchHits(apiKey: string, q: string): Promise<SearchHit[]> {
   sUrl.searchParams.set("q", `${q} ${QUERY_MINUS}`);
   sUrl.searchParams.set("key", apiKey);
 
-  const res = await fetch(sUrl.toString(), { signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) throw new Error(`YT search ${res.status}`);
+  await reserveYouTube(100);
+  const res = await youtubeFetch(sUrl.toString(), signal);
   const data = await res.json();
   return ((data.items || []) as Array<{ id?: { videoId?: string }; snippet?: { title?: string; description?: string } }>)
     .map((it) => ({
@@ -210,15 +226,12 @@ type YtVideo = {
  * Three query angles → dedupe → hard relevance + duration gates →
  * rank by (title-match first, engagement second).
  */
-export async function getTopShort(
+async function fetchTopShort(
   title: string,
   year: string,
   kind: "movie" | "tv" = "movie",
+  signal: AbortSignal,
 ): Promise<ShortResult> {
-  const cacheKey = `${kind}|${title.toLowerCase()}|${year}`;
-  const hit = cache.get(cacheKey);
-  if (hit && Date.now() - hit.at < TTL) return hit.data;
-
   const apiKey = ytKey();
   if (!apiKey) return watchFallback(title, year); // never cache key-less fallbacks
 
@@ -235,7 +248,7 @@ export async function getTopShort(
         ? [`${title} ${year} bollywood scene hindi`, `${title} ${year} movie scene`]
         : []),
     ];
-    const settled = await Promise.allSettled(queries.map((q) => searchHits(apiKey, q)));
+    const settled = await Promise.allSettled(queries.map((q) => searchHits(apiKey, q, signal)));
     const seen = new Map<string, SearchHit>();
     for (const s of settled) {
       if (s.status !== "fulfilled") continue;
@@ -250,8 +263,8 @@ export async function getTopShort(
     vUrl.searchParams.set("part", "statistics,snippet,contentDetails");
     vUrl.searchParams.set("id", ids.join(","));
     vUrl.searchParams.set("key", apiKey);
-    const vRes = await fetch(vUrl.toString(), { signal: AbortSignal.timeout(10_000) });
-    if (!vRes.ok) throw new Error(`YT videos ${vRes.status}`);
+    await reserveYouTube(1);
+    const vRes = await youtubeFetch(vUrl.toString(), signal);
     const vData = await vRes.json();
 
     const keys = keywords(title);
@@ -315,9 +328,41 @@ export async function getTopShort(
       watchUrl: `https://www.youtube.com/watch?v=${top.v.id}`,
       fallback: false,
     };
-    cacheSet(cacheKey, result);
     return result;
   } catch {
-    return watchFallback(title, year); // transient — do NOT cache
+    return watchFallback(title, year);
   }
+}
+
+export async function getTopShort(title: string, year: string, kind: "movie" | "tv" = "movie"): Promise<ShortResult> {
+  const fallback = watchFallback(title, year);
+  // No shared quota protection means no paid upstream requests, even in development.
+  if (!ytKey() || !hasSecurityStore()) return fallback;
+  const key = storeKey(`${kind}|${title.toLowerCase()}|${year}`);
+  const hit = cache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.data;
+  const running = pending.get(key);
+  if (running) return running;
+  if (pending.size >= 8) return fallback;
+  const task = (async () => {
+    const lock = `whatowatch:youtube:lock:${key}`;
+    const owner = randomUUID();
+    let acquired = false;
+    try {
+      const saved = await redis<string | null>(["GET", `whatowatch:youtube:cache:${key}`]);
+      if (saved) { const data = JSON.parse(saved) as ShortResult; cacheSet(key, data); return data; }
+      if (await redis<string | null>(["GET", "whatowatch:youtube:cooldown"])) return fallback;
+      acquired = await redis<string | null>(["SET", lock, owner, "NX", "EX", 45]) === "OK";
+      if (!acquired) return fallback;
+      const result = await fetchTopShort(title, year, kind, AbortSignal.timeout(20_000));
+      await redis(["SET", `whatowatch:youtube:cache:${key}`, JSON.stringify(result), "EX", result.fallback ? 60 : TTL / 1000]);
+      cacheSet(key, result);
+      return result;
+    } catch { return fallback; }
+    finally {
+      if (acquired) await redis(["EVAL", "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0", 1, lock, owner]).catch(() => {});
+    }
+  })();
+  pending.set(key, task);
+  try { return await task; } finally { pending.delete(key); }
 }
